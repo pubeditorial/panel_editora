@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f172a" />
   <meta name="robots" content="noindex,nofollow,noarchive" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
-  <title>PUBPANEL 2.0 | PUB Editorial</title>
+  <title>PUBPANEL 1.0 | PUB Editorial</title>
 
   <style>
     :root{
@@ -367,7 +367,7 @@
     <section class="panel">
       <div class="top">
         <div>
-          <div class="title">PUBPANEL 2.0</div>
+          <div class="title">PUBPANEL 1.0</div>
           <div class="sub">PUB Editorial · leads, orçamentos, tickets e fila de emails.</div>
         </div>
 
@@ -623,8 +623,8 @@
 
   <script>
     const PUBPANEL = {
-      VERSION: "2.0",
-      STORAGE_API_BASE: "PUBPANEL_COG_V2_API_BASE"
+      VERSION: "1.0",
+      STORAGE_API_BASE: "PUBPANEL_COG_V1_API_BASE"
     };
 
     const state = {
@@ -849,6 +849,19 @@
       );
     }
 
+    function isSchemaError(err){
+      const code = String(err && err.code || "").toUpperCase();
+      const message = String(err && err.message || "").toLowerCase();
+
+      return (
+        code === "SCHEMA_INVALID" ||
+        code === "SYSTEM_UNAVAILABLE" && message.indexOf("sheet") >= 0 ||
+        message.indexOf("schema") >= 0 ||
+        message.indexOf("cabeçalho inválido") >= 0 ||
+        message.indexOf("cabecalho invalido") >= 0
+      );
+    }
+
     function isPubcareNotInstalledError(err){
       const code = String(err && err.code || "").toUpperCase();
       const message = String(err && err.message || "").toLowerCase();
@@ -924,6 +937,9 @@
       if(state.mail.overview && state.mail.overview.data){
         return state.mail.overview.data;
       }
+      if(state.mail.overview && typeof state.mail.overview === "object"){
+        return state.mail.overview.data || state.mail.overview;
+      }
       return null;
     }
 
@@ -946,39 +962,44 @@
       return "muted-pill";
     }
 
+    function resolveCoreLabel(core){
+      if(!core) return "—";
+      if(core.ready === true || core.ok === true || core.schema_ready === true) return "Pronto";
+      if(core.installed === true) return "Atenção";
+      return "Instalar";
+    }
+
+    function resolveMailLabel(mail){
+      if(!mail) return "—";
+      if(mail.ready === true && mail.ok === true) return "Pronto";
+      if(mail.available === false) return "Indisponível";
+      if(mail.installed === true) return "Atenção";
+      return "Instalar";
+    }
+
+    function resolveCareLabel(care){
+      if(!care) return state.tickets.length ? (attentionCount() ? "Atenção" : "Pronto") : "—";
+      if(care.ready === true || care.ok === true) return "Pronto";
+      if(care.available === false) return "Indisponível";
+      if(care.installed === true) return "Atenção";
+      return "Instalar";
+    }
+
     function renderHeaderState(){
       const core = coreHealth();
       const mail = mailHealth();
       const care = careModule();
 
-      let coreLabel = "—";
-      if(core){
-        if(core.ready === true || core.ok === true || core.schema_ready === true) coreLabel = "Pronto";
-        else if(core.installed === true) coreLabel = "Atenção";
-        else coreLabel = "Instalar";
-      }
-
-      let mailLabel = "—";
-      if(mail){
-        if(mail.ready === true && mail.ok === true) mailLabel = "Pronto";
-        else if(mail.available === false) mailLabel = "Indisponível";
-        else if(mail.installed === true) mailLabel = "Atenção";
-        else mailLabel = "Instalar";
-      }
-
-      let careLabel = "—";
-      if(care){
-        if(care.ready === true || care.ok === true) careLabel = "Pronto";
-        else if(care.available === false) careLabel = "Indisponível";
-        else if(care.installed === true) careLabel = "Atenção";
-        else careLabel = "Atenção";
-      } else {
-        careLabel = state.tickets.length ? (attentionCount() ? "Atenção" : "Pronto") : "—";
-      }
+      const coreLabel = resolveCoreLabel(core);
+      const mailLabel = resolveMailLabel(mail);
+      const careLabel = resolveCareLabel(care);
 
       let overall = "—";
-      if(coreLabel === "Pronto" && (mailLabel === "Pronto" || mailLabel === "—" || mailLabel === "Indisponível")) overall = "Pronto";
-      else if(core || mail || state.tickets.length) overall = "Atenção";
+      if(coreLabel === "Pronto" && (mailLabel === "Pronto" || mailLabel === "—" || mailLabel === "Indisponível" || mailLabel === "Atenção") && (careLabel === "Pronto" || careLabel === "—" || careLabel === "Atenção" || careLabel === "Indisponível")){
+        overall = "Pronto";
+      } else if(core || mail || care || state.tickets.length) {
+        overall = "Atenção";
+      }
 
       $("#pill-overall").className = "pill " + pillClass(overall);
       $("#pill-core").className = "pill " + pillClass(coreLabel);
@@ -1281,6 +1302,13 @@
           return;
         }
 
+        if(isSchemaError(err)){
+          clearAdminState();
+          renderAll();
+          setBanner("warn", "A base está acessível, mas a estrutura ainda não está pronta para operação administrativa.");
+          return;
+        }
+
         clearAdminState();
         renderAll();
         setBanner("warn", err.message || "Falha ao carregar dados administrativos.");
@@ -1330,7 +1358,7 @@
           return;
         }
 
-        if(isPubcareNotInstalledError(err) || isActionUnavailableError(err)){
+        if(isPubcareNotInstalledError(err) || isActionUnavailableError(err) || isSchemaError(err)){
           setBanner("error", "O módulo de atendimento ainda não está preparado nesta base.");
           return;
         }
@@ -1349,6 +1377,10 @@
       }catch(err){
         if(isBusyError(err)){
           setBanner("warn", "O sistema está ocupado processando outras operações. Tente novamente em alguns segundos.");
+          return;
+        }
+        if(isSchemaError(err)){
+          setBanner("error", "O módulo de mailer ainda não está preparado nesta base.");
           return;
         }
         throw err;
@@ -1375,6 +1407,10 @@
           setBanner("warn", "O sistema está ocupado. Tente enviar a mensagem novamente em alguns segundos.");
           return;
         }
+        if(isSchemaError(err)){
+          setBanner("error", "O módulo de mailer ainda não está preparado nesta base.");
+          return;
+        }
         throw err;
       }
     }
@@ -1394,6 +1430,10 @@
       }catch(err){
         if(isBusyError(err)){
           setBanner("warn", "O sistema está ocupado. Tente bloquear o email novamente em alguns segundos.");
+          return;
+        }
+        if(isSchemaError(err)){
+          setBanner("error", "O módulo de mailer ainda não está preparado nesta base.");
           return;
         }
         throw err;
