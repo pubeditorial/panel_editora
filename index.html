@@ -915,13 +915,22 @@
         : null;
     }
 
-    function mailHealth(){
-      return state.mail.health ||
-        (state.health && state.health.data && state.health.data.modules && state.health.data.modules.pubmail
-          ? state.health.data.modules.pubmail
-          : null);
-    }
+ function mailHealth(){
+  const publicMail =
+    state.health &&
+    state.health.data &&
+    state.health.data.modules &&
+    state.health.data.modules.pubmail
+      ? state.health.data.modules.pubmail
+      : null;
 
+  const adminMail = state.mail.health || null;
+
+  if(!adminMail) return publicMail;
+  if(!publicMail) return adminMail;
+
+  return Object.assign({}, publicMail, adminMail);
+}
     function careModule(){
       return state.health && state.health.data && state.health.data.modules && state.health.data.modules.pubcare
         ? state.health.data.modules.pubcare
@@ -973,17 +982,31 @@
       return "Instalar";
     }
 
-    function resolveMailLabel(mail){
-      if(!mail) return "—";
+   function resolveMailLabel(mail){
+  if(!mail) return "—";
 
-      const backendLabel = normalizeBackendStatusLabel(mail.status_label);
-      if(backendLabel) return backendLabel;
+  const backendLabel = normalizeBackendStatusLabel(mail.status_label);
+  if(backendLabel) return backendLabel;
 
-      if(mail.ready === true && mail.ok === true) return "Pronto";
-      if(mail.available === false) return "Indisponível";
-      if(mail.installed === true) return "Atenção";
-      return "Instalar";
-    }
+  const ready =
+    mail.ready === true ||
+    mail.ok === true ||
+    (mail.triggers && mail.triggers.ok === true && !!mail.template_folder_id);
+
+  const installed =
+    mail.installed === true ||
+    !!mail.template_folder_id ||
+    !!mail.pubcrm_root_folder_id ||
+    !!mail.pubcrm_mail_folder_id;
+
+  const available =
+    mail.available !== false;
+
+  if(ready) return "Pronto";
+  if(!available) return "Indisponível";
+  if(installed) return "Atenção";
+  return "Instalar";
+}
 
     function resolveCareLabel(care){
       if(!care){
