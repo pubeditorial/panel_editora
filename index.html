@@ -302,6 +302,7 @@
       color:var(--muted);
       font-size:13px;
       line-height:1.5;
+      white-space:pre-wrap;
     }
 
     .item-meta{
@@ -347,12 +348,6 @@
       color:var(--muted);
       font-size:13px;
       line-height:1.55;
-    }
-
-    .actions-col{
-      display:grid;
-      gap:10px;
-      align-content:start;
     }
 
     @media (max-width:980px){
@@ -576,7 +571,7 @@
       <div class="grid-2">
         <div class="field">
           <label class="label" for="send-manual-emails">Mensagem manual</label>
-          <input id="send-manual-emails" class="input" placeholder="emails separados por vírgula ou quebra de linha" />
+          <textarea id="send-manual-emails" class="textarea" placeholder="emails separados por vírgula ou quebra de linha"></textarea>
           <input id="send-manual-subject" class="input" placeholder="Assunto" />
           <textarea id="send-manual-message" class="textarea" placeholder="Mensagem"></textarea>
           <div class="row">
@@ -855,7 +850,7 @@
 
       return (
         code === "SCHEMA_INVALID" ||
-        code === "SYSTEM_UNAVAILABLE" && message.indexOf("sheet") >= 0 ||
+        (code === "SYSTEM_UNAVAILABLE" && message.indexOf("sheet") >= 0) ||
         message.indexOf("schema") >= 0 ||
         message.indexOf("cabeçalho inválido") >= 0 ||
         message.indexOf("cabecalho invalido") >= 0
@@ -871,7 +866,7 @@
         message.indexOf("care_ticket_state") >= 0 ||
         message.indexOf("care_macros") >= 0 ||
         message.indexOf("care_log") >= 0 ||
-        message.indexOf("sheet") >= 0 && message.indexOf("ausente") >= 0
+        (message.indexOf("sheet") >= 0 && message.indexOf("ausente") >= 0)
       );
     }
 
@@ -962,15 +957,28 @@
       return "muted-pill";
     }
 
+    function normalizeBackendStatusLabel(label){
+      const s = String(label || "").trim().toUpperCase();
+      if(s === "PRONTO") return "Pronto";
+      if(s === "ALERTA") return "Atenção";
+      if(s === "NAO_INSTALADO") return "Instalar";
+      if(s === "INDISPONIVEL") return "Indisponível";
+      return "";
+    }
+
     function resolveCoreLabel(core){
       if(!core) return "—";
-      if(core.ready === true || core.ok === true || core.schema_ready === true) return "Pronto";
-      if(core.installed === true) return "Atenção";
+      if(core.ready === true && core.ok === true) return "Pronto";
+      if(core.installed === true || core.schema_ready === true) return "Atenção";
       return "Instalar";
     }
 
     function resolveMailLabel(mail){
       if(!mail) return "—";
+
+      const backendLabel = normalizeBackendStatusLabel(mail.status_label);
+      if(backendLabel) return backendLabel;
+
       if(mail.ready === true && mail.ok === true) return "Pronto";
       if(mail.available === false) return "Indisponível";
       if(mail.installed === true) return "Atenção";
@@ -978,11 +986,49 @@
     }
 
     function resolveCareLabel(care){
-      if(!care) return state.tickets.length ? (attentionCount() ? "Atenção" : "Pronto") : "—";
+      if(!care){
+        if(state.tickets.length){
+          return attentionCount() ? "Atenção" : "Pronto";
+        }
+        return "—";
+      }
+
       if(care.ready === true || care.ok === true) return "Pronto";
       if(care.available === false) return "Indisponível";
       if(care.installed === true) return "Atenção";
       return "Instalar";
+    }
+
+    function resolveOverallLabel(coreLabel, mailLabel, careLabel){
+      if(
+        coreLabel === "Pronto" &&
+        (mailLabel === "Pronto" || mailLabel === "Indisponível" || mailLabel === "—") &&
+        (careLabel === "Pronto" || careLabel === "Indisponível" || careLabel === "—")
+      ){
+        return "Pronto";
+      }
+
+      if(
+        coreLabel === "Instalar" ||
+        mailLabel === "Instalar" ||
+        careLabel === "Instalar"
+      ){
+        return "Atenção";
+      }
+
+      if(
+        coreLabel === "Atenção" ||
+        mailLabel === "Atenção" ||
+        careLabel === "Atenção"
+      ){
+        return "Atenção";
+      }
+
+      if(coreLabel !== "—" || mailLabel !== "—" || careLabel !== "—"){
+        return "Atenção";
+      }
+
+      return "—";
     }
 
     function renderHeaderState(){
@@ -993,13 +1039,7 @@
       const coreLabel = resolveCoreLabel(core);
       const mailLabel = resolveMailLabel(mail);
       const careLabel = resolveCareLabel(care);
-
-      let overall = "—";
-      if(coreLabel === "Pronto" && (mailLabel === "Pronto" || mailLabel === "—" || mailLabel === "Indisponível" || mailLabel === "Atenção") && (careLabel === "Pronto" || careLabel === "—" || careLabel === "Atenção" || careLabel === "Indisponível")){
-        overall = "Pronto";
-      } else if(core || mail || care || state.tickets.length) {
-        overall = "Atenção";
-      }
+      const overall = resolveOverallLabel(coreLabel, mailLabel, careLabel);
 
       $("#pill-overall").className = "pill " + pillClass(overall);
       $("#pill-core").className = "pill " + pillClass(coreLabel);
@@ -1256,7 +1296,17 @@
 
     async function loadMailSummaryOnly(){
       const healthJson = await apiPost("admin_mail_health", {});
-      const summaryJson = await apiPost("admin_mail_summary", {});
+      let summaryJson = null;
+
+      try{
+        summaryJson = await apiPost("admin_mail_summary", {});
+      }catch(err){
+        if(isActionUnavailableError(err)){
+          summaryJson = await apiPost("admin_mail_overview", {});
+        }else{
+          throw err;
+        }
+      }
 
       state.mail.health = healthJson || null;
       state.mail.overview = summaryJson || null;
@@ -1515,7 +1565,7 @@
         handleAction(async function(){
           const json = await apiPost("admin_mail_health", {});
           state.mail.health = json;
-          state.mail.raw = json;
+          state.mail.raw = { health: json };
           renderAll();
           setBanner("ok", "Mailer health carregado.");
         });
@@ -1533,6 +1583,7 @@
         try{
           await runPublicMode("status");
           await runPublicMode("health");
+          await runPublicMode("contract");
           setBanner("warn", "Painel iniciado com leituras públicas. Aplique o token para carregar dados administrativos.");
         }catch(err){
           renderAll();
